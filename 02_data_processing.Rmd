@@ -1,0 +1,382 @@
+---
+title: "CMS Firearms Claims Data processing"
+author: "Margaret Janiczek"
+date: "2025-02-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(gtsummary)
+library(gt)
+```
+
+# Data input
+
+Load Synthetic Medicare inpatient, outpatient, and SNF data which was downloaded from [CMS website](https://data.cms.gov/collection/synthetic-medicare-enrollment-fee-for-service-claims-and-prescription-drug-event). 
+
+Make list of firearm codes and there names as per [this resource](https://dph.illinois.gov/topics-services/emergency-preparedness-response/ems/trauma-program/headspinal-cord-and-violent-injury-registry-hsvi/violent-injury-inclusion-codes.html). 
+
+
+
+```{r}
+# read in data downloaded from https://data.cms.gov/collection/synthetic-medicare-enrollment-fee-for-service-claims-and-prescription-drug-event
+dat_inpatient <- read.csv("inpatient.csv", sep = "|")
+
+dat_outpatient <- read.csv("outpatient.csv", sep = "|")
+
+dat_nursing <- read.csv("snf.csv", sep = "|")
+
+
+# input firearm codes as found at https://dph.illinois.gov/topics-services/emergency-preparedness-response/ems/trauma-program/headspinal-cord-and-violent-injury-registry-hsvi/violent-injury-inclusion-codes.html
+
+# I went through the entire list and just picked out firearm related violent injury codes.
+
+firearm_codes <- c('W32', 'W33', 'X72', 'X73', 'X74',
+                       'X93', 'X94', 'X95',  
+                       'Y22', 'Y23', 'Y24', 
+                       'Y35', 'Z04')
+
+# grabbing descriptive names from the above site as well for use in tables
+firearm_names <- list(
+  "W32" = "Accidental handgun discharge",
+  "W33" = "Accidental discharge of larger firearm (rifle, shotgun)",
+  "X72" = "Intentional self-harm by handgun discharge",
+  "X73" = "Intentional self-harm by larger firearm discharge",
+  "X74" = "Intentional self-harm by other firearm",
+  "X93" = "Assault by handgun discharge",
+  "X94" = "Assault by larger firearm discharge (rifle, shotgun)",
+  "X95" = "Assault by unspecified firearm discharge",
+  "Y22" = "Handgun discharge, undetermined intent",
+  "Y23" = "Rifle/shotgun/large firearm discharge, undetermined intent",
+  "Y24" = "Unspecified firearm discharge, undetermined intent",
+  "Y35" = "Injuries resulting from legal intervention",
+  "Z04" = "Examination encounter"
+)
+
+# categorize firearm events as accidental, self harm, assault, or others
+firearm_key <- data.frame(
+  ICD_SHORT = names(firearm_names),
+  icd_descrip = unlist(firearm_names), 
+  category = c("Accidental", "Accidental", "Self-harm", "Self-harm",
+               "Self-harm", "Assault", "Assault", "Assault", "Undetermined", "Undetermined", "Undetermined", "Legal intervention", "Other")
+)
+
+length(unique(dat_inpatient$BENE_ID))
+
+length(unique(dat_inpatient$CLM_ID))
+
+
+dat_overview <- data.frame(
+  data_source = c("Inpatient", "Outpatient", "SNF"),
+  unique_beneficiaries = c(length(unique(dat_inpatient$BENE_ID)),
+                           length(unique(dat_outpatient$BENE_ID)),
+                           length(unique(dat_nursing$BENE_ID))),
+  unique_claims = c(length(unique(dat_inpatient$CLM_ID)),
+                           length(unique(dat_outpatient$CLM_ID)),
+                           length(unique(dat_nursing$CLM_ID)))
+)
+
+# print out overview of data from each source
+gt(dat_overview)
+```
+
+
+```{r}
+
+# wrangle inpatient into long format
+dat_long_inpatient <- pivot_longer(dat_inpatient,
+                         cols = starts_with("ICD_DGNS"), 
+                         values_to = "ICD_CODE")
+
+# subset by icd codes found in firearm code
+dat_long_sub_inpatient <- dat_long_inpatient %>%
+  mutate(ICD_SHORT = str_sub(ICD_CODE, start = 1L, end = 3L)) %>% 
+  filter(ICD_SHORT %in% firearm_codes)
+
+
+# repeat above for outpatient data
+dat_long_outpatient <- dat_outpatient %>%  select(BENE_ID, CLM_ID, starts_with("ICD_DGNS")) %>%
+  pivot_longer(          cols = starts_with("ICD_DGNS"), 
+                         values_to = "ICD_CODE")
+
+dat_long_sub_outpatient <- dat_long_outpatient %>%
+  mutate(ICD_SHORT = str_sub(ICD_CODE, start = 1L, end = 3L)) %>%
+  filter(ICD_SHORT %in% firearm_codes)
+
+
+# repeat above for nursing facility data
+dat_long_snf <- pivot_longer(dat_nursing,
+                         cols = starts_with("ICD_DGNS"), 
+                         values_to = "ICD_CODE") %>%
+  mutate(ICD_SHORT = str_sub(ICD_CODE, start = 1L, end = 3L))
+
+dat_long_sub_nursing <- dat_long_snf %>%
+  mutate(ICD_SHORT = str_sub(ICD_CODE, start = 1L, end = 3L))%>%
+  filter(ICD_SHORT %in% firearm_codes)
+
+
+# now make a list of the beneficiaries with firearm injuries
+firearm_injury_sub_in <- unique(dat_long_sub_inpatient$BENE_ID)
+firearm_injury_sub_out <- unique(dat_long_sub_outpatient$BENE_ID)
+
+firearm_injury_all <- unique(c(firearm_injury_sub_in, firearm_injury_sub_out))
+
+dat_firearm_overview <- data.frame(
+  data_source = c("Inpatient", "Outpatient", "SNF"),
+  unique_beneficiaries = c(length(unique(dat_long_sub_inpatient$BENE_ID)),
+                           length(unique(dat_long_sub_outpatient$BENE_ID)),
+                           length(unique(dat_long_sub_nursing$BENE_ID))),
+  unique_claims = c(length(unique(dat_long_sub_inpatient$CLM_ID)),
+                           length(unique(dat_long_sub_outpatient$CLM_ID)),
+                           length(unique(dat_long_sub_nursing$CLM_ID)))
+)
+
+# print out overview of data from each source
+gt(dat_firearm_overview)
+```
+
+# Cost of firarms claims 
+
+```{r}
+# estimating costs of claims
+
+# now going back to the full data, filter for firearms related claims
+dat_analysis_in <- dat_inpatient %>%
+  filter(CLM_ID %in% dat_long_sub_inpatient$CLM_ID) %>%
+  group_by(CLM_ID) %>%
+  slice(1) %>%
+  left_join(dat_long_sub_inpatient %>% dplyr::select(BENE_ID, CLM_ID, name, ICD_CODE, ICD_SHORT) %>% distinct()) %>%
+  left_join(firearm_key)
+
+dat_analysis_out <- dat_outpatient %>%
+  filter(CLM_ID %in% dat_long_sub_outpatient$CLM_ID) %>%
+  group_by(CLM_ID) %>%
+  slice(1)%>%
+  left_join(dat_long_sub_outpatient %>% dplyr::select(BENE_ID, CLM_ID, name, ICD_CODE, ICD_SHORT) %>% distinct()) %>%
+  left_join(firearm_key)
+
+length(unique(dat_analysis_in$BENE_ID))
+
+length(unique(dat_analysis_in$CLM_ID))
+
+length(unique(dat_long_sub_outpatient$BENE_ID))
+
+length(unique(dat_long_sub_outpatient$CLM_ID))
+
+# calculate total cost
+```
+
+```{r}
+# summarize initial data
+
+dat_analysis_in %>%
+  ungroup() %>%
+  dplyr::select(
+    CLM_TOT_CHRG_AMT, CLM_PMT_AMT,
+    icd_descrip
+  ) %>%
+  tbl_summary()
+
+
+dat_analysis_out %>%
+  ungroup() %>%
+  dplyr::select(
+    CLM_TOT_CHRG_AMT, CLM_PMT_AMT,
+    icd_descrip
+  ) %>%
+  tbl_summary()
+```
+
+## Claims before and after firearm injury
+
+```{r}
+
+# identify date of first firearms injury code
+date_of_firearms <- dat_analysis_in %>%
+  ungroup() %>%
+  dplyr::select(BENE_ID, firearm_clm_date = CLM_FROM_DT, PRVDR_STATE_CD,) %>%
+  bind_rows(dat_analysis_out %>% ungroup() %>% dplyr::select(BENE_ID, firearm_clm_date = CLM_FROM_DT)) %>%
+  mutate(firearm_clm_date = dmy(firearm_clm_date)) %>%
+  group_by(BENE_ID) %>%
+  arrange(firearm_clm_date) %>%
+  slice(1)
+
+
+# patients before and after
+
+dat_sub_inpatients <- dat_inpatient %>%
+  filter(BENE_ID %in% c(dat_analysis_in$BENE_ID, dat_analysis_out$BENE_ID)) %>%
+  group_by(CLM_ID) %>%
+  slice(1) %>%
+  select(BENE_ID, CLM_ID, CLM_TOT_CHRG_AMT, CLM_PMT_AMT, CLM_FROM_DT, everything()) %>%
+  # make an indicator variable for whether the claim is from firearm event
+  mutate(
+    firearm_event = CLM_ID %in% dat_analysis_in$CLM_ID
+  ) %>%
+  # join to the date of firearms key
+  left_join(date_of_firearms)
+
+dat_sub_inpatients <- dat_sub_inpatients %>%
+  ungroup() %>%
+  mutate(
+    year_before = (dmy(CLM_FROM_DT) < firearm_clm_date) #& (dmy(CLM_FROM_DT) > firearm_clm_date%m-% years(1))
+,
+    year_after = (dmy(CLM_FROM_DT) > firearm_clm_date) #& (dmy(CLM_FROM_DT) < firearm_clm_date%m-% years(1))
+,
+    time_period = fct_relevel(as.factor(
+      ifelse(dmy(CLM_FROM_DT) < firearm_clm_date, "Before claim",
+             ifelse((dmy(CLM_FROM_DT) > firearm_clm_date),"After claim", "Firearm Injury Claim")
+             )
+      ), "Before claim", "Firearm Injury Claim")
+)
+
+# now get whether events were before or after firearm event
+
+
+
+dat_sub_outpatients <- dat_outpatient %>%
+  filter(BENE_ID %in% c(dat_analysis_out$BENE_ID, dat_analysis_in$BENE_ID)) %>%
+  group_by(CLM_ID) %>%
+  slice(1)
+
+dat_sub_nursing <- dat_nursing %>%
+  filter(BENE_ID %in% c(dat_analysis_out$BENE_ID, dat_analysis_in$BENE_ID)) %>%
+  group_by(CLM_ID) %>%
+  slice(1)
+
+
+length(unique(dat_sub_inpatients$BENE_ID))
+
+# Now try above but with all in, out, and nursing
+
+
+
+dat_claims_all <- dat_inpatient %>%
+  select(BENE_ID, CLM_ID, CLM_TOT_CHRG_AMT, CLM_PMT_AMT, CLM_FROM_DT, everything()) %>%
+  mutate(
+    data_source = "inpatient"
+  ) %>%
+  bind_rows(dat_outpatient %>%
+  select(BENE_ID, CLM_ID, CLM_TOT_CHRG_AMT, CLM_PMT_AMT, CLM_FROM_DT, everything()) %>% mutate(data_source = "outpatient")) %>%
+    bind_rows(dat_nursing %>%
+  select(BENE_ID, CLM_ID, CLM_TOT_CHRG_AMT, CLM_PMT_AMT, CLM_FROM_DT, everything()) %>% mutate(data_source = "snf")) %>%
+  filter(BENE_ID %in% c(dat_analysis_in$BENE_ID, dat_analysis_out$BENE_ID)) %>%
+  group_by(CLM_ID) %>%
+  slice(1)
+
+
+dat_claims_all2 <- dat_claims_all %>%
+  # make an indicator variable for whether the claim is from firearm event
+  mutate(
+    firearm_event =  CLM_ID %in% c(dat_analysis_in$CLM_ID, dat_analysis_out$CLM_ID)
+  ) %>%
+  # join to the date of firearms key
+  left_join(date_of_firearms)
+
+# now mutate inpatient data to add a variable that says whether claim was before or after firearm event
+
+dat_sub_claims_all <- dat_claims_all2 %>%
+  ungroup() %>%
+  mutate(
+    year_before_firearm = firearm_clm_date %m-% years(1),
+    year_after_firearm = firearm_clm_date %m+% years(1),
+    CLM_FROM_DT = dmy(CLM_FROM_DT),
+    time_period = fct_relevel(as.factor(ifelse(
+      (CLM_FROM_DT >= year_before_firearm) & (CLM_FROM_DT < firearm_clm_date), "less than year before FI",
+      ifelse(
+        (CLM_FROM_DT > firearm_clm_date) & (CLM_FROM_DT <= year_after_firearm),
+        "less than year after FI", 
+        ifelse((CLM_FROM_DT <year_before_firearm), "more than year before FI",
+        ifelse((CLM_FROM_DT > year_after_firearm), "more than year after FI",
+               ifelse((CLM_FROM_DT == firearm_clm_date), "Firearm Injury (FI)", NA)
+          
+        ))
+      )
+    )), "more than year before FI", "less than year before FI", "Firearm Injury (FI)", "less than year after FI")) %>%
+  dplyr::select(firearm_clm_date, year_before_firearm, year_after_firearm, CLM_FROM_DT, time_period, everything())
+  
+
+
+
+
+dat_sub_claims_all %>%
+  dplyr::select(data_source, time_period) %>%
+  tbl_summary(by = data_source)
+```
+
+Principal diagnosis code for many of the inpatient claims was "Awaiting organ transplant".
+
+We can now take a look at the average cost of claim in the year before and the year after the firearm injury code. 
+
+```{r}
+dat_sub_claims_all %>%
+  ungroup() %>%
+  filter(data_source != "snf") %>%
+  dplyr::select(
+    data_source, time_period, CLM_TOT_CHRG_AMT
+  ) %>%
+  tbl_strata(
+    strata = data_source,
+    .tbl_fun = 
+      ~.x %>%
+      tbl_summary(by = time_period)
+  )
+```
+
+
+We can also look at the average number of firearm events and their cost by year. 
+
+```{r}
+date_examine <- dat_sub_claims_all %>%
+  #filter(time_period == "Firearm Injury Claim") %>%
+  mutate(
+    year_of_claim = year(firearm_clm_date)
+  ) %>%
+  dplyr::select(BENE_ID, CLM_ID, time_period, year_of_claim, time_period, firearm_clm_date, firearm_event, CLM_FROM_DT, everything())
+
+
+
+date_examine %>%
+  filter(time_period == "Firearm Injury (FI)") %>%
+  mutate(year_of_claim = as.factor(year_of_claim)) %>%
+  ggplot() +
+  geom_bar(aes(x = year_of_claim, fill = data_source))
+
+date_examine %>%
+  filter(data_source != "snf") %>%
+  filter(time_period == "Firearm Injury (FI)") %>%
+  mutate(year_of_claim = as.factor(year_of_claim)) %>%
+  ggplot() +
+  geom_boxplot(aes(x = year_of_claim, y = CLM_TOT_CHRG_AMT, fill = data_source))
+  
+# 
+# date_examine %>% 
+#   filter(data_source != "snf") %>%
+#   filter(!is.na(time_period)) %>%
+#   dplyr::select(year_of_claim, CLM_TOT_CHRG_AMT, data_source, time_period) %>%
+#   mutate(year_of_claim = as.factor(year_of_claim)) %>%
+#   ggplot() +
+#   geom_boxplot(aes(x = year_of_claim, y = CLM_TOT_CHRG_AMT, fill = time_period))+
+#   facet_grid(~data_source)
+```
+
+# Abstract 
+
+In the United States, between 2009 and 2017, there was an average of more than 85,000 emergency department visits for firearms-related injuries, and in 2019 firearms accounted for more deaths on average than deaths due to motor-vehicle accidents. Not only is the toll on human life significant, but also there are financial ramifications for both individuals and the healthcare system. An emergency-room visit related to firearms injury has been estimated to cost above \$5,000 on average ($70,000 if the injury was severe enough to warrant hospital admission), and patient costs in the 6 months after firearm injury are on average found to be 3 times the cost compared to the 6 months prior to firearm injury. In this study we will aim to replicate these findings in the available CMS synthetic dataset. First, estimate the average cost of claim for a firearms-related injury, then estimate the average change in claims comparing the year before to the year after injury. We will compare these estimates based on grouping states by various regulatory buckets: minimum age to purchase (no minimum, 18, 21), concealed carry laws (unrestricted, permit, banned), and looking at states with and without assault weapon bans. We will also set up the framework for answering causal inference questions regarding whether implementation of additional gun laws decreases the amount and cost of firearm-related injuries. We will use states which implemented new gun laws in the wake of the 2018 Parkland shooting which include Florida, Vermont, New Jersey, Washington, Pennsylvania, and Oregon. 
+
+
+# Introduction
+
+
+# Methods
+
+
+# Results
+
+There were 58066 inpatient claims. Of these, 112 (0.2%) inpatient claim lines had an ICD-10 code related to firearms injury, which came from 23 unique beneficiary IDs. 
+
+There were additionally 575,092 outpatient claims, of which 30 (<0.001%) had an ICD-10 code related to firearms injury, from 13 unique beneficiaries. 
+

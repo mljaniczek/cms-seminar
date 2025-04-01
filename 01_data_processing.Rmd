@@ -151,12 +151,21 @@ dat_analysis_out %>%
 
 
 
+Captured date of firearms incident. 
+
 ```{r}
+
+# date of FIRST firearm visit
 date_of_firearms <- dat_analysis_in %>%
   ungroup() %>%
   dplyr::select(BENE_ID, firearm_clm_date = CLM_FROM_DT) %>%
+  # grab dates from outpatient too
   bind_rows(dat_analysis_out %>% ungroup() %>% dplyr::select(BENE_ID, firearm_clm_date = CLM_FROM_DT)) %>%
-  mutate(firearm_clm_date = dmy(firearm_clm_date))
+  mutate(firearm_clm_date = dmy(firearm_clm_date)) %>%
+  group_by(BENE_ID) %>%
+  arrange(firearm_clm_date) %>%
+  slice(1)  %>%
+  ungroup()
 
 
 # patients before and after
@@ -178,21 +187,66 @@ dat_sub_inpatients <- dat_sub_inpatients %>%
 
 # now get whether events were before or after firearm event
 
-
+# TODO get other out and nursing claims as above 
 
 dat_sub_outpatients <- dat_outpatient %>%
   filter(BENE_ID %in% c(dat_analysis_out$BENE_ID, dat_analysis_in$BENE_ID)) %>%
   group_by(CLM_ID) %>%
-  slice(1)
+  slice(1) %>%
+  select(BENE_ID, CLM_ID, CLM_TOT_CHRG_AMT, CLM_PMT_AMT, CLM_FROM_DT, everything()) %>%
+  mutate(
+    firearm_event = CLM_ID %in% dat_analysis_in$CLM_ID
+  ) %>%
+  left_join(date_of_firearms)%>%
+  mutate(
+    before_or_after = dmy(CLM_FROM_DT) < firearm_clm_date
+  )
 
 dat_sub_nursing <- dat_nursing %>%
   filter(BENE_ID %in% c(dat_analysis_out$BENE_ID, dat_analysis_in$BENE_ID)) %>%
   group_by(CLM_ID) %>%
-  slice(1)
+  slice(1)%>%
+  select(BENE_ID, CLM_ID, CLM_TOT_CHRG_AMT, CLM_PMT_AMT, CLM_FROM_DT, everything()) %>%
+  mutate(
+    firearm_event = CLM_ID %in% dat_analysis_in$CLM_ID
+  ) %>%
+  left_join(date_of_firearms)%>%
+  mutate(
+    before_or_after = dmy(CLM_FROM_DT) < firearm_clm_date
+  )
 
 
 length(unique(dat_sub_inpatients$BENE_ID))
 ```
+
+# Calculate cost of claims before and after incident
+
+```{r}
+dat_sub_inpatients %>%
+  filter(firearm_event == FALSE) %>%
+  ungroup() %>%
+  dplyr::select(
+    CLM_TOT_CHRG_AMT, before_or_after
+  ) %>%
+  tbl_summary(by = before_or_after)
+
+dat_sub_outpatients %>%
+  filter(firearm_event == FALSE) %>%
+  ungroup() %>%
+  dplyr::select(
+    CLM_TOT_CHRG_AMT, before_or_after
+  ) %>%
+  tbl_summary(by = before_or_after)
+
+dat_sub_nursing %>%
+  filter(firearm_event == FALSE) %>%
+  ungroup() %>%
+  dplyr::select(
+    CLM_TOT_CHRG_AMT, before_or_after
+  ) %>%
+  tbl_summary(by = before_or_after)
+```
+
 
 Principal diagnosis code for many of the inpatient claims was "Awaiting organ transplant".
 
@@ -202,6 +256,9 @@ Principal diagnosis code for many of the inpatient claims was "Awaiting organ tr
 ?? Calculating total cost of visit
 
 Calc cost of claim or of line item? 
+
+# Abstract 
+In the United States, between 2009 and 2017, there was an average of more than 85,000 emergency department visits for firearms-related injuries, and in 2019 firearms accounted for more deaths on average than deaths due to motor-vehicle accidents. Not only is the toll on human life significant, but also there are financial ramifications for both individuals and the healthcare system. An emergency-room visit related to firearms injury has been estimated to cost above \$5,000 on average (\$70,000 if the injury was severe enough to warrant hospital admission), and patient costs in the 6 months after firearm injury are on average found to be 3 times the cost compared to the 6 months prior to firearm injury. In this study we will aim to replicate these findings in the available CMS synthetic dataset. First, estimate the average cost of claim for a firearms-related injury, then estimate the average change in claims comparing the year before to the year after injury. We will compare these estimates based on grouping states by various regulatory buckets: minimum age to purchase (no minimum, 18, 21), concealed carry laws (unrestricted, permit, banned), and looking at states with and without assault weapon bans. We will also set up the framework for answering causal inference questions regarding whether implementation of additional gun laws decreases the amount and cost of firearm-related injuries. We will use states which implemented new gun laws in the wake of the 2018 Parkland shooting which include Florida, Vermont, New Jersey, Washington, Pennsylvania, and Oregon.
 
 
 # Introduction
